@@ -1,0 +1,63 @@
+cabal-version:   2.2
+name:            fix
+version:         0.1
+synopsis:        Fixed-point type
+description:
+  Fixed-point of a functor
+  .
+  @
+  newtype Fix f = Fix (f (Fix f))
+  @
+  .
+  Note: @NFData@ instance is provided only for @deepseq >=1.4.3.0@
+  build-plans.
+
+homepage:        https://github.com/phadej/fix
+license:         BSD-2-Clause
+license-file:    LICENSE
+author:          Edward Kmett <ekmett@gmail.com>
+maintainer:      Oleg Grenrus <oleg.grenrus@iki.fi>
+copyright:       Copyright (c) 2011-2015 Edward Kmett, 2019 Oleg Grenrus
+category:        Data Structures
+build-type:      Simple
+extra-doc-files: README.md
+tested-with:
+  GHC ==7.2.2
+   || ==7.4.2
+   || ==7.6.3
+   || ==7.8.4
+   || ==7.10.3
+   || ==8.0.2
+   || ==8.2.2
+   || ==8.4.4
+   || ==8.6.5
+   || ==8.8.3
+   || ==8.10.1
+
+source-repository head
+  type:     git
+  location: https://github.com/phadej/fix
+
+library
+  hs-source-dirs:   src
+  default-language: Haskell2010
+  ghc-options:      -Wall
+  exposed-modules:  Data.Fix
+
+  if impl(ghc >=8.0)
+    ghc-options: -Wno-trustworthy-safe
+
+  if impl(ghc >=8.4)
+    ghc-options:
+      -Wincomplete-uni-patterns -Wincomplete-record-updates
+      -Wredundant-constraints -Widentities -Wmissing-export-lists
+
+  build-depends:
+    , base      >=4.4     && <4.15
+    , deepseq   >=1.3.0.0 && <1.5
+    , hashable  >=1.2.7.0 && <1.4
+
+  if !impl(ghc >=8.0)
+    build-depends:
+      , transformers         >=0.3   && <0.6
+      , transformers-compat  ^>=0.6.5
