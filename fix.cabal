@@ -1,7 +1,7 @@
-cabal-version:   2.2
-name:            fix
-version:         0.1
-synopsis:        Fixed-point type
+cabal-version: 2.2
+name:          fix
+version:       0.1
+synopsis:      Fixed-point type
 description:
   Fixed-point of a functor
   .
@@ -12,15 +12,14 @@ description:
   Note: @NFData@ instance is provided only for @deepseq >=1.4.3.0@
   build-plans.
 
-homepage:        https://github.com/phadej/fix
-license:         BSD-2-Clause
-license-file:    LICENSE
-author:          Edward Kmett <ekmett@gmail.com>
-maintainer:      Oleg Grenrus <oleg.grenrus@iki.fi>
-copyright:       Copyright (c) 2011-2015 Edward Kmett, 2019 Oleg Grenrus
-category:        Data Structures
-build-type:      Simple
-extra-doc-files: README.md
+homepage:      https://github.com/phadej/fix
+license:       BSD-2-Clause
+license-file:  LICENSE
+author:        Edward Kmett <ekmett@gmail.com>
+maintainer:    Oleg Grenrus <oleg.grenrus@iki.fi>
+copyright:     Copyright (c) 2011-2015 Edward Kmett, 2019 Oleg Grenrus
+category:      Data Structures
+build-type:    Simple
 tested-with:
   GHC ==7.2.2
    || ==7.4.2
