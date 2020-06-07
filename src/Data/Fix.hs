@@ -11,22 +11,25 @@
 {-# LANGUAGE StandaloneDeriving   #-}
 #endif
 
--- | Fixed point of a functor.
+-- | Fixed points of a functor.
 module Data.Fix (
     -- * Fix
     Fix (..),
     unfix,
     hoistFix,
     hoistFix',
-    cata,
-    ana,
-    hylo,
+    foldFix,
+    unfoldFix,
     -- * Mu - least fixed point
     Mu (..),
     hoistMu,
-    -- * Nu - greates fixed point
+    foldMu,
+    unfoldMu,
+    -- * Nu - greatest fixed point
     Nu (..),
     hoistNu,
+    foldNu,
+    unfoldNu,
 ) where
 
 import Data.Function        (on)
@@ -48,6 +51,22 @@ import Data.Data (Data)
 import Data.Data
 #endif
 
+-- $setup
+-- >>> :set -XDeriveFunctor
+-- >>> import Data.Functor.Classes
+-- >>> data ListF a b = Nil | Cons a b deriving (Show, Functor)
+--
+-- >>> :{
+-- >>> instance Show a => Show1 (ListF a) where
+-- >>>     liftShowsPrec _  _ d Nil        = showString "Nil"
+-- >>>     liftShowsPrec sp _ d (Cons a b) = showParen (d > 10) $ showString "Cons " . showsPrec 11 a . showChar ' ' . sp 11 b
+-- >>> :}
+--
+-- >>> :{
+-- >>> let elimListF n c Nil        = 0
+-- >>>     elimListF n c (Cons a b) = c a b
+-- >>> :}
+
 -------------------------------------------------------------------------------
 -- Fix
 -------------------------------------------------------------------------------
@@ -63,17 +82,22 @@ hoistFix nt = go where go (Fix f) = Fix (nt (fmap go f))
 hoistFix' :: Functor g => (forall a. f a -> g a) -> Fix f -> Fix g
 hoistFix' nt = go where go (Fix f) = Fix (fmap go (nt f))
 
--- | Catamorphism or generic function fold.
-cata :: Functor f => (f a -> a) -> Fix f -> a
-cata f = f . fmap (cata f) . unfix
+-- | Fold 'Fix'.
+--
+-- >>> let fp = unfoldFix (\i -> if i < 4 then Cons i (i + 1) else Nil) (0 :: Int)
+-- >>> foldFix (elimListF 0 (+)) fp
+-- 6
+--
+foldFix :: Functor f => (f a -> a) -> Fix f -> a
+foldFix f = f . fmap (foldFix f) . unfix
 
--- | Anamorphism or generic function unfold.
-ana :: Functor f => (a -> f a) -> a -> Fix f
-ana f = Fix . fmap (ana f) . f
-
--- | Hylomorphism is anamorphism followed by catamorphism.
-hylo :: Functor f => (f b -> b) -> (a -> f a) -> a -> b
-hylo f g = h where h = f . fmap h . g
+-- | Unfold 'Fix'.
+--
+-- >>> unfoldFix (\i -> if i < 4 then Cons i (i + 1) else Nil) (0 :: Int)
+-- Fix (Cons 0 (Fix (Cons 1 (Fix (Cons 2 (Fix (Cons 3 (Fix Nil))))))))
+--
+unfoldFix :: Functor f => (a -> f a) -> a -> Fix f
+unfoldFix f = Fix . fmap (unfoldFix f) . f
 
 -------------------------------------------------------------------------------
 -- Functor instances
@@ -91,10 +115,12 @@ instance Show1 f => Show (Fix f) where
             $ showString "Fix "
             . showsPrec1 11 a
 
+#ifdef __GLASGOW_HASKELL__
 instance Read1 f => Read (Fix f) where
     readPrec = parens $ prec 10 $ do
         Ident "Fix" <- lexP
         fmap Fix (step (readS_to_Prec readsPrec1))
+#endif
 
 -------------------------------------------------------------------------------
 -- hashable
@@ -153,24 +179,40 @@ fixDataType = mkDataType "Data.Functor.Foldable.Fix" [fixConstr]
 newtype Mu f = Mu (forall a. (f a -> a) -> a)
 
 instance (Functor f, Eq1 f) => Eq (Mu f) where
-    (==) = (==) `on` toFix
+    (==) = (==) `on` foldMu Fix
 
 instance (Functor f, Ord1 f) => Ord (Mu f) where
-    compare = compare `on` toFix
+    compare = compare `on` foldMu Fix
 
 instance (Functor f, Show1 f) => Show (Mu f) where
     showsPrec d f = showParen (d > 10) $
-        showString "fromFix " . showsPrec 11 (toFix f)
+        showString "unfoldMu unfix " . showsPrec 11 (foldMu Fix f)
 
 #ifdef __GLASGOW_HASKELL__
 instance (Functor f, Read1 f) => Read (Mu f) where
     readPrec = parens $ prec 10 $ do
-        Ident "fromFix" <- lexP
-        fmap fromFix (step readPrec)
+        Ident "unfoldMu" <- lexP
+        Ident "unfix" <- lexP
+        fmap (unfoldMu unfix) (step readPrec)
 #endif
 
 hoistMu :: (forall a. f a -> g a) -> Mu f -> Mu g
 hoistMu n (Mu mk) = Mu $ \roll -> mk (roll . n)
+
+-- | Fold 'Mu'.
+--
+-- >>> let mu = unfoldMu (\i -> if i < 4 then Cons i (i + 1) else Nil) (0 :: Int)
+-- >>> foldMu (elimListF 0 (+)) mu
+-- 6
+foldMu :: (f a -> a) -> Mu f -> a
+foldMu f (Mu mk) = mk f
+
+-- | Unfold 'Mu'.
+--
+-- >>> unfoldMu (\i -> if i < 4 then Cons i (i + 1) else Nil) (0 :: Int)
+-- unfoldMu unfix (Fix (Cons 0 (Fix (Cons 1 (Fix (Cons 2 (Fix (Cons 3 (Fix Nil)))))))))
+unfoldMu :: Functor f => (a -> f a) -> a -> Mu f
+unfoldMu f x = Mu $ \mk -> hylo mk f x
 
 -------------------------------------------------------------------------------
 -- Nu
@@ -179,41 +221,45 @@ hoistMu n (Mu mk) = Mu $ \roll -> mk (roll . n)
 data Nu f where Nu :: (a -> f a) -> a -> Nu f
 
 instance (Functor f, Eq1 f) => Eq (Nu f) where
-    (==) = (==) `on` toFix
+    (==) = (==) `on` foldNu Fix
 
 instance (Functor f, Ord1 f) => Ord (Nu f) where
-    compare = compare `on` toFix
+    compare = compare `on` foldNu Fix
 
 instance (Functor f, Show1 f) => Show (Nu f) where
     showsPrec d f = showParen (d > 10) $
-        showString "fromFix " . showsPrec 11 (toFix f)
+        showString "unfoldNu unfix " . showsPrec 11 (foldNu Fix f)
 
 #ifdef __GLASGOW_HASKELL__
 instance (Functor f, Read1 f) => Read (Nu f) where
     readPrec = parens $ prec 10 $ do
-        Ident "fromFix" <- lexP
-        fmap fromFix (step readPrec)
+        Ident "unfoldNu" <- lexP
+        Ident "unfix" <- lexP
+        fmap (unfoldNu unfix) (step readPrec)
 #endif
 
 hoistNu :: (forall a. f a -> g a) -> Nu f -> Nu g
 hoistNu n (Nu next seed) = Nu (n . next) seed
 
+-- | Fold 'Nu'.
+--
+-- >>> let nu = unfoldNu (\i -> if i < 4 then Cons i (i + 1) else Nil) (0 :: Int)
+-- >>> foldNu (elimListF 0 (+)) nu
+-- 6
+--
+foldNu :: Functor f => (f a -> a) -> Nu f -> a
+foldNu f (Nu next seed) = hylo f next seed
+
+-- | Unfold 'Nu'.
+--
+-- >>> unfoldNu (\i -> if i < 4 then Cons i (i + 1) else Nil) (0 :: Int)
+-- unfoldNu unfix (Fix (Cons 0 (Fix (Cons 1 (Fix (Cons 2 (Fix (Cons 3 (Fix Nil)))))))))
+unfoldNu :: (a -> f a) -> a -> Nu f
+unfoldNu = Nu
+
 -------------------------------------------------------------------------------
--- IsFix, not exported
+-- hylo, not exported
 -------------------------------------------------------------------------------
 
-class IsFix fix where
-    toFix   :: Functor f => fix f -> Fix f
-    fromFix :: Functor f => Fix f -> fix f
-
-instance IsFix Fix where
-    toFix   = id
-    fromFix = id
-
-instance IsFix Mu where
-    toFix (Mu f) = f Fix
-    fromFix f    = Mu $ flip cata f
-
-instance IsFix Nu where
-    toFix (Nu f x) = ana f x
-    fromFix        = Nu unfix
+hylo :: Functor f => (f b -> b) -> (a -> f a) -> a -> b
+hylo f g = h where h = f . fmap h . g
