@@ -104,6 +104,7 @@ import Data.Data
 
 -- $setup
 -- >>> :set -XDeriveFunctor
+-- >>> import Prelude (showChar, Int, Num (..))
 -- >>> import Data.Functor.Classes
 -- >>> data ListF a b = Nil | Cons a b deriving (Show, Functor)
 --
