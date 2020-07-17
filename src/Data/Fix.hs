@@ -12,10 +12,44 @@
 #endif
 
 -- | Fixed points of a functor.
+--
+-- Type @f@ should be a 'Functor' if you want to use
+-- simple recursion schemes or 'Traversable' if you want to
+-- use monadic recursion schemes. This style allows you to express
+-- recursive functions in non-recursive manner.
+-- You can imagine that a non-recursive function
+-- holds values of the previous iteration.
+--
+-- An example:
+--
+-- First we define a base functor. The arguments @b@ are recursion points.
+--
+-- >>> data ListF a b = Nil | Cons a b deriving (Show, Functor)
+--
+-- The list is then a fixed point of 'ListF'
+--
+-- >>> type List a = Fix (ListF a)
+--
+-- We can write @length@ function. Note that the function we give
+-- to 'foldFix' is not recursive. Instead the results
+-- of recursive calls are in @b@ positions, and we need to deal
+-- only with one layer of the structure.
+--
+-- >>> :{
+-- let length :: List a -> Int
+--     length = foldFix $ \x -> case x of
+--         Nil      -> 0
+--         Cons _ n -> n + 1
+-- :}
+--
+-- If you already have recursive type, like '[Int]',
+-- you can first convert it to `Fix (ListF a)` and then `foldFix`.
+-- Alternatively you can use @recursion-schemes@ combinators
+-- which work directly on recursive types.
+--
 module Data.Fix (
     -- * Fix
     Fix (..),
-    unfix,
     hoistFix,
     hoistFix',
     foldFix,
@@ -30,16 +64,33 @@ module Data.Fix (
     hoistNu,
     foldNu,
     unfoldNu,
+    -- * Refolding
+    refold,
+    -- * Monadic variants
+    foldFixM,
+    unfoldFixM,
+    refoldM,
+    -- * Deprecated aliases
+    cata, ana, hylo,
+    cataM, anaM, hyloM,
 ) where
 
+import Data.Traversable (Traversable (..))
+import Prelude          (Eq (..), Functor (..), Monad (..), Ord (..), Read (..), Show (..), showParen, showString, ($), (.), (=<<))
+
+#ifdef __GLASGOW_HASKELL__
+#if! HAS_POLY_TYPEABLE
+import Prelude (const, error, undefined)
+#endif
+#endif
+
+import Control.Monad        (liftM)
 import Data.Function        (on)
-import Data.Functor.Classes
-       (Eq1, Ord1, Read1, Show1, compare1, eq1, readsPrec1, showsPrec1)
+import Data.Functor.Classes (Eq1, Ord1, Read1, Show1, compare1, eq1, readsPrec1, showsPrec1)
 import Data.Hashable        (Hashable (..))
 import Data.Hashable.Lifted (Hashable1, hashWithSalt1)
 import Data.Typeable        (Typeable)
-import Text.Read
-       (Lexeme (Ident), Read (..), lexP, parens, prec, readS_to_Prec, step)
+import Text.Read            (Lexeme (Ident), Read (..), lexP, parens, prec, readS_to_Prec, step)
 
 #if MIN_VERSION_deepseq(1,4,3)
 import Control.DeepSeq (NFData (..), NFData1, rnf1)
@@ -71,14 +122,14 @@ import Data.Data
 -- Fix
 -------------------------------------------------------------------------------
 
-newtype Fix f = Fix (f (Fix f))
+-- | A fix-point type.
+newtype Fix f = Fix { unFix :: f (Fix f) }
 
-unfix :: Fix f -> f (Fix f)
-unfix (Fix f) = f
-
+-- | Replace base functor in 'Fix'.
 hoistFix :: Functor f => (forall a. f a -> g a) -> Fix f -> Fix g
 hoistFix nt = go where go (Fix f) = Fix (nt (fmap go f))
 
+-- | Like 'hoistFix' but 'fmap'ping over @g@.
 hoistFix' :: Functor g => (forall a. f a -> g a) -> Fix f -> Fix g
 hoistFix' nt = go where go (Fix f) = Fix (fmap go (nt f))
 
@@ -89,7 +140,7 @@ hoistFix' nt = go where go (Fix f) = Fix (fmap go (nt f))
 -- 6
 --
 foldFix :: Functor f => (f a -> a) -> Fix f -> a
-foldFix f = f . fmap (foldFix f) . unfix
+foldFix f = go where go = f . fmap go . unFix
 
 -- | Unfold 'Fix'.
 --
@@ -97,7 +148,7 @@ foldFix f = f . fmap (foldFix f) . unfix
 -- Fix (Cons 0 (Fix (Cons 1 (Fix (Cons 2 (Fix (Cons 3 (Fix Nil))))))))
 --
 unfoldFix :: Functor f => (a -> f a) -> a -> Fix f
-unfoldFix f = Fix . fmap (unfoldFix f) . f
+unfoldFix f = go where go = Fix . fmap go . f
 
 -------------------------------------------------------------------------------
 -- Functor instances
@@ -127,11 +178,11 @@ instance Read1 f => Read (Fix f) where
 -------------------------------------------------------------------------------
 
 instance Hashable1 f => Hashable (Fix f) where
-    hashWithSalt salt = hashWithSalt1 salt . unfix
+    hashWithSalt salt = hashWithSalt1 salt . unFix
 
 #if MIN_VERSION_deepseq(1,4,3)
 instance NFData1 f => NFData (Fix f) where
-    rnf = rnf1 . unfix
+    rnf = rnf1 . unFix
 #endif
 
 -------------------------------------------------------------------------------
@@ -176,7 +227,7 @@ fixDataType = mkDataType "Data.Functor.Foldable.Fix" [fixConstr]
 -- Mu
 -------------------------------------------------------------------------------
 
-newtype Mu f = Mu (forall a. (f a -> a) -> a)
+newtype Mu f = Mu { unMu :: forall a. (f a -> a) -> a }
 
 instance (Functor f, Eq1 f) => Eq (Mu f) where
     (==) = (==) `on` foldMu Fix
@@ -186,14 +237,14 @@ instance (Functor f, Ord1 f) => Ord (Mu f) where
 
 instance (Functor f, Show1 f) => Show (Mu f) where
     showsPrec d f = showParen (d > 10) $
-        showString "unfoldMu unfix " . showsPrec 11 (foldMu Fix f)
+        showString "unfoldMu unFix " . showsPrec 11 (foldMu Fix f)
 
 #ifdef __GLASGOW_HASKELL__
 instance (Functor f, Read1 f) => Read (Mu f) where
     readPrec = parens $ prec 10 $ do
         Ident "unfoldMu" <- lexP
-        Ident "unfix" <- lexP
-        fmap (unfoldMu unfix) (step readPrec)
+        Ident "unFix" <- lexP
+        fmap (unfoldMu unFix) (step readPrec)
 #endif
 
 hoistMu :: (forall a. f a -> g a) -> Mu f -> Mu g
@@ -210,9 +261,9 @@ foldMu f (Mu mk) = mk f
 -- | Unfold 'Mu'.
 --
 -- >>> unfoldMu (\i -> if i < 4 then Cons i (i + 1) else Nil) (0 :: Int)
--- unfoldMu unfix (Fix (Cons 0 (Fix (Cons 1 (Fix (Cons 2 (Fix (Cons 3 (Fix Nil)))))))))
+-- unfoldMu unFix (Fix (Cons 0 (Fix (Cons 1 (Fix (Cons 2 (Fix (Cons 3 (Fix Nil)))))))))
 unfoldMu :: Functor f => (a -> f a) -> a -> Mu f
-unfoldMu f x = Mu $ \mk -> hylo mk f x
+unfoldMu f x = Mu $ \mk -> refold mk f x
 
 -------------------------------------------------------------------------------
 -- Nu
@@ -228,14 +279,14 @@ instance (Functor f, Ord1 f) => Ord (Nu f) where
 
 instance (Functor f, Show1 f) => Show (Nu f) where
     showsPrec d f = showParen (d > 10) $
-        showString "unfoldNu unfix " . showsPrec 11 (foldNu Fix f)
+        showString "unfoldNu unFix " . showsPrec 11 (foldNu Fix f)
 
 #ifdef __GLASGOW_HASKELL__
 instance (Functor f, Read1 f) => Read (Nu f) where
     readPrec = parens $ prec 10 $ do
         Ident "unfoldNu" <- lexP
-        Ident "unfix" <- lexP
-        fmap (unfoldNu unfix) (step readPrec)
+        Ident "unFix" <- lexP
+        fmap (unfoldNu unFix) (step readPrec)
 #endif
 
 hoistNu :: (forall a. f a -> g a) -> Nu f -> Nu g
@@ -248,18 +299,78 @@ hoistNu n (Nu next seed) = Nu (n . next) seed
 -- 6
 --
 foldNu :: Functor f => (f a -> a) -> Nu f -> a
-foldNu f (Nu next seed) = hylo f next seed
+foldNu f (Nu next seed) = refold f next seed
 
 -- | Unfold 'Nu'.
 --
 -- >>> unfoldNu (\i -> if i < 4 then Cons i (i + 1) else Nil) (0 :: Int)
--- unfoldNu unfix (Fix (Cons 0 (Fix (Cons 1 (Fix (Cons 2 (Fix (Cons 3 (Fix Nil)))))))))
+-- unfoldNu unFix (Fix (Cons 0 (Fix (Cons 1 (Fix (Cons 2 (Fix (Cons 3 (Fix Nil)))))))))
 unfoldNu :: (a -> f a) -> a -> Nu f
 unfoldNu = Nu
 
 -------------------------------------------------------------------------------
--- hylo, not exported
+-- refold
 -------------------------------------------------------------------------------
 
-hylo :: Functor f => (f b -> b) -> (a -> f a) -> a -> b
-hylo f g = h where h = f . fmap h . g
+-- | Refold one recursive type into another, one layer at the time.
+--
+refold :: Functor f => (f b -> b) -> (a -> f a) -> a -> b
+refold f g = h where h = f . fmap h . g
+
+-------------------------------------------------------------------------------
+-- Monadic variants
+-------------------------------------------------------------------------------
+
+-- | Monadic 'foldFix'.
+--
+--
+foldFixM:: (Monad m, Traversable t)
+    => (t a -> m a) -> Fix t -> m a
+foldFixM f = go where go = (f =<<) . mapM go . unFix
+
+-- | Monadic anamorphism.
+unfoldFixM :: (Monad m, Traversable t)
+    => (a -> m (t a)) -> (a -> m (Fix t))
+unfoldFixM f = go where go = liftM Fix . (mapM go =<<) . f
+
+-- | Monadic hylomorphism.
+refoldM :: (Monad m, Traversable t)
+    => (t b -> m b) -> (a -> m (t a)) -> (a -> m b)
+refoldM phi psi = go where go = (phi =<<) . (mapM go =<<) . psi
+
+-------------------------------------------------------------------------------
+-- Deprecated aliases
+-------------------------------------------------------------------------------
+
+-- | Catamorphism or generic function fold.
+cata :: Functor f => (f a -> a) -> (Fix f -> a)
+cata = foldFix
+{-# DEPRECATED cata "Use foldFix" #-}
+
+-- | Anamorphism or generic function unfold.
+ana :: Functor f => (a -> f a) -> (a -> Fix f)
+ana = unfoldFix
+{-# DEPRECATED ana "Use unfoldFix" #-}
+
+-- | Hylomorphism is anamorphism followed by catamorphism.
+hylo :: Functor f => (f b -> b) -> (a -> f a) -> (a -> b)
+hylo = refold
+{-# DEPRECATED hylo "Use refold" #-}
+
+-- | Monadic catamorphism.
+cataM :: (Monad m, Traversable t)
+    => (t a -> m a) -> Fix t -> m a
+cataM = foldFixM
+{-# DEPRECATED cataM "Use foldFixM" #-}
+
+-- | Monadic anamorphism.
+anaM :: (Monad m, Traversable t)
+    => (a -> m (t a)) -> (a -> m (Fix t))
+anaM = unfoldFixM
+{-# DEPRECATED anaM "Use unfoldFixM" #-}
+
+-- | Monadic hylomorphism.
+hyloM :: (Monad m, Traversable t)
+    => (t b -> m b) -> (a -> m (t a)) -> (a -> m b)
+hyloM = refoldM
+{-# DEPRECATED hyloM "Use refoldM" #-}
